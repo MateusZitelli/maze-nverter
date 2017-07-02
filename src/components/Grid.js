@@ -1,93 +1,145 @@
 import React from 'react';
 
+const CELL_SIZE = 4;
+
 class Cell extends React.Component {
-  shouldComponentUpdate(nextProps, nextState){
-    return nextProps.color !== this.props.color;
-  }
-
-  render() {
-    const boxStyle = color => ({
-      display: 'inline-block',
-      backgroundColor: color,
-      width: '50px',
-      height: '50px',
-      lineHeight: '50px',
-      textAlign: 'center',
-      verticalAlign: 'middle',
-      border: '1px solid black',
-    });
-    const cameFrom = this.props.cameFrom;
-    let text;
-    if(cameFrom !== null){
-      const dx = cameFrom.x - this.props.x;
-      const dy = cameFrom.y - this.props.y;
-
-      if(dx == -1){
-        text = "↑";
-      }else if(dx == 1){
-        text = "↓";
-      }else if(dy == -1){
-        text = "←";
-      }else if(dy == 1){
-        text = "→";
-      }
-    }else{
-      text = '-';
+    shouldComponentUpdate(nextProps, nextState){
+        return nextProps.color !== this.props.color ||
+            nextProps.cameFrom !== this.props.cameFrom;
     }
 
-    return <div style={boxStyle(this.props.color)}>{text}</div>;
-  }
+    render() {
+        const genColor = intensity => `hsl(${intensity}, 100%, 50%)`;
+        const boxStyle = color => ({ fill: color });
+        let color;
+        if(this.props.matrix === Infinity){
+            color = '#000';
+        }else if (this.props.cameFrom === null){
+            color = '#fff';
+        }else{
+            color = genColor(this.props.color * 255);
+        }
+        const x = this.props.x * CELL_SIZE;
+        const y = this.props.y * CELL_SIZE;
+        const sendEnterEvent = e => this.props.onEnter(e, this.props.x, this.props.y);
+        return <rect width={CELL_SIZE}
+                     height={CELL_SIZE}
+                     onMouseEnter={sendEnterEvent}
+                     x={x}
+                     y={y}
+                     style={boxStyle(color)}>
+        </rect>;
+    }
+}
+
+class Path extends React.Component {
+    shouldComponentUpdate(nextProps, nextState){
+        return this.props.cameFrom !== nextProps.cameFrom
+            || this.props.renderMask !== nextProps.renderMask;
+    }
+
+    render() {
+        const cameFrom = this.props.cameFrom;
+        let dx, dy;
+
+        if(cameFrom !== null){
+            dx = (cameFrom.get('x') - this.props.x) * CELL_SIZE;
+            dy = (cameFrom.get('y') - this.props.y) * CELL_SIZE;
+        }
+
+        const color = this.props.renderMask ? "rgba(180,0,0,1)": "black";
+        const width = this.props.renderMask ? 4: 1;
+        const x = this.props.x * CELL_SIZE;
+        const y = this.props.y * CELL_SIZE;
+        const line = <g>
+            <line
+                x1={x + CELL_SIZE / 2.0}
+                y1={y + CELL_SIZE / 2.0}
+                x2={x + dx + CELL_SIZE / 2.0}
+                y2={y + dy + CELL_SIZE / 2.0}
+                style={{stroke: color, strokeWidth: width}} />
+        </g>;
+        return dx || dy ? line: null;
+    }
 }
 
 class Line extends React.Component {
-  shouldComponentUpdate(nextProps, nextState){
-    for(let i = 0; i < nextProps.values.length; i++){
-      if(nextProps.values[i] !== this.props.values[i])
-        return true;
+    shouldComponentUpdate(nextProps, nextState){
+        return !nextProps.values.equals(this.props.values) ||
+            !nextProps.cameFrom.equals(this.props.cameFrom);
     }
-    return false;
-  }
-  render() {
-    const props = this.props;
-    const genColor = intensity => `hsl(${intensity}, 100%, 50%)`;
+    render() {
+        const props = this.props;
+        const columns = props.values.zip(props.cameFrom, props.matrix)
+            .map(([intensity, cameFrom, m], i) =>
+            <Cell
+                key={i}
+                x={props.x}
+                y={i}
+                onEnter={props.onEnter}
+                cameFrom={cameFrom}
+                matrix={m}
+                color={intensity}/>);
 
-    const lineStyle = {
-      display: 'block',
-      margin: 0,
-      padding: 0,
-      lineHeight: '0px',
-    };
+        return <g>{columns}</g>;
+    }
+}
 
-    const columns = props.values.map((val, i) =>
-      <Cell
-        key={i}
-        x={this.props.x}
-        y={i}
-        cameFrom={this.props.cameFrom[i]}
-        color={genColor(val * 255)}/>);
+class PathLine extends React.Component {
+    shouldComponentUpdate(nextProps, nextState){
+        return !nextProps.cameFrom.equals(this.props.cameFrom) ||
+            !nextProps.renderMask.equals(this.props.renderMask);
+    }
+    render() {
+        const props = this.props;
+        const columns = props.cameFrom
+            .zip(props.renderMask)
+            .map(([val, renderMask], i) =>
+                <Path
+                    key={i}
+                    x={props.x}
+                    y={i}
+                    renderMask={renderMask}
+                    cameFrom={val} />);
 
-    return <div style={lineStyle}>{columns}</div>;
-  }
+        return <g>{columns}</g>;
+    }
 }
 
 const Grid = (props) => {
-  const score = props.score;
+    const score = props.score;
 
-  const max = Math.max
-    .apply(null, score
-      .map(line => Math.max.apply(null, line.filter(v => v !== Infinity))));
+    const max = score.map(line => line
+        .filter(v => v !== Infinity).max())
+        .filter(v => v).max();
+    const min = score.map(line => line.min()).min();
 
-  const min = Math.min
-    .apply(null, score
-      .map(line => Math.min.apply(null, line)));
-  const diff = max === min ? 1 : max - min;
+    const diff = !max || max === min ? 1 : max - min;
 
-  const relativeScore = score.map(line => line.map(val => (val - min) / diff));
+    const relativeScore = score.map(line => line.map(val => (val - min) / diff));
 
-  const lines = relativeScore
-    .map((val, i) => <Line key={i} x={i} values={val} cameFrom={props.cameFrom[i]}/>);
+    const squareLines = relativeScore
+        .zip(props.cameFrom, props.matrix)
+        .map(([intensity, cameFrom, m], i) => <Line
+            key={i}
+            matrix={m}
+            values={intensity}
+            onEnter={props.onEnter}
+            cameFrom={cameFrom}
+            x={i} />);
 
-  return <div style={{ display: 'block' }}>{lines}</div>;
+    const pathLines = props.cameFrom
+        .zip(props.renderMask)
+        .map(([cameFrom, renderMask], i) => <PathLine
+            key={i}
+            x={i}
+            renderMask={renderMask}
+            cameFrom={cameFrom}/>);
+
+    return <svg style={{ display: 'block', width: "100%", height: "1200px"}}>
+        {squareLines}
+        {pathLines}
+    </svg>;
 };
 
 export default Grid;

@@ -1,167 +1,250 @@
 import React from 'react';
 import { render } from 'react-dom';
-import xs from 'xstream';
 import 'babel-core/register';
 import 'babel-polyfill';
+import Immutable from 'immutable';
+import Rx from "rxjs";
 
 import Grid from './components/Grid';
 
 const range = (start, count) =>
-  Array.apply(0, Array(count))
-    .map((element, index) => index + start);
+    Array.apply(0, new Array(count))
+        .map((element, index) => index + start);
 
 const genMatrix = (x, y, val) => range(0, x)
-  .map(() => range(0, y)
-    .map(() => val));
-
-const genIdxMatrix = (sx, sy) => range(0, sx)
-  .map(x => range(0, sy)
-    .map(y => ({ x, y })));
-
+    .map(() => range(0, y).map(() => val));
 
 const heuristicCostEstimate = (startIdx, goal) => {
-  const dx = Math.abs(startIdx.x - goal.x);
-  const dy = Math.abs(startIdx.y - goal.y);
-  return Math.sqrt(dx * dx + dy * dy);
+    const dx = Math.abs(startIdx.x - goal.x);
+    const dy = Math.abs(startIdx.y - goal.y);
+    return (dx + dy);
 };
 
-const aStar = (start, goal, matrix, listener) => {
-  const minScore = (set, scores) => set.reduce((minObj, loc) => {
-    const locScore = scores[loc.x][loc.y];
-    if (locScore < minObj.min) {
-      return Object.assign({}, minObj, { min: locScore, loc });
-    }
-    return minObj;
-  }, {
-    min: Infinity,
-    loc: null,
-  }).loc;
+const minScore = (set, scores) => set
+    .reduce((minObj, loc) => {
+        const locScore = scores[loc.x][loc.y];
+        if (locScore < minObj.min) {
+            return Object.assign({}, minObj, { min: locScore, loc });
+        }
+        return minObj;
+    }, {
+        min: Infinity,
+        loc: null,
+    }).loc;
 
-  /*
-  const checkPath = (gScore, current) => (neighbor) => {
-    const tentativeGScore = gScore[current.x][current.y] + distBetween(current, neighbor);
-    return tentativeGScore < gScore[neighbor.x][neighbor.y];
-  };
-  */
+const distBetween = (current, neighbor) => matrix[neighbor.x][neighbor.y];
 
-  const x = matrix.length;
-  const y = matrix[0].length;
-  const distBetween = (current, neighbor) => matrix[neighbor.x][neighbor.y];
+const addToMap = (current, state) => (neighbor) => {
+    const tentativeGScore = state.gScore[current.x][current.y]+ distBetween(current, neighbor);
 
-  const idxMatrix = genIdxMatrix(x, y);
-  const startIdx = idxMatrix[start.x][start.y];
-
-  const openSet = new Set([startIdx]);
-  const closedSet = new Set([]);
-  const cameFrom = genMatrix(x, y, null);
-
-  const gScore = genMatrix(x, y, Infinity);
-  gScore[start.x][start.y] = 0;
-
-  const fScore = genMatrix(x, y, Infinity);
-  fScore[start.x][start.y] = heuristicCostEstimate(startIdx, goal);
-
-  const addToMap = current => (neighbor) => {
-    const tentativeGScore = gScore[current.x][current.y] + distBetween(current, neighbor);
-
-    if(openSet.has(neighbor) && tentativeGScore < gScore[neighbor.x][neighbor.y]){
-      openSet.delete(neighbor);
-      return;
+    if(state.openSet.has(neighbor) && tentativeGScore < state.gScore[neighbor.x][neighbor.y]){
+        state.openSet.delete(neighbor);
+        return;
     }
 
-    if(closedSet.has(neighbor) && tentativeGScore < gScore[neighbor.x][neighbor.y]){
-      closedSet.delete(neighbor);
-      return;
+    if(state.closedSet.has(neighbor) && tentativeGScore < state.gScore[neighbor.x][neighbor.y]){
+        state.closedSet.delete(neighbor);
+        return;
     }
 
-    if(!openSet.has(neighbor) && !closedSet.has(neighbor) && tentativeGScore < gScore[neighbor.x][neighbor.y]){
-      openSet.add(neighbor);
-      cameFrom[neighbor.x][neighbor.y] = current;
-      gScore[neighbor.x][neighbor.y] = tentativeGScore;
-      fScore[neighbor.x][neighbor.y] = tentativeGScore + heuristicCostEstimate(neighbor, goal);
+    if(!state.openSet.has(neighbor) && !state.closedSet.has(neighbor) && tentativeGScore < state.gScore[neighbor.x][neighbor.y]){
+        state.openSet.add(neighbor);
+        state.cameFrom[neighbor.x][neighbor.y] = current;
+        state.gScore[neighbor.x][neighbor.y] = tentativeGScore;
+        state.fScore[neighbor.x][neighbor.y] = tentativeGScore + heuristicCostEstimate(neighbor, state.goal);
     }
-  };
+};
 
-  let current = minScore(Array.from(openSet), fScore);
-  let status = {
-    current,
-    gScore,
-    fScore,
-    cameFrom,
-    done: false
-  }
 
-  const interval2 = setInterval(() => {
-    listener.next(status);
-  }, 30);
+const aStarInitialStateFatory = (start, goal, matrix) => {
+    const startIdx = genIdx(start.x, start.y);
+    const width = matrix.length;
+    const height = matrix[0].length;
+    const openSet = new Set([startIdx]);
+    const closedSet = new Set([]);
+    const gScore = genMatrix(width, height, Infinity);
+    gScore[start.x][start.y] = 0;
+    const fScore = genMatrix(width, height, Infinity);
+    fScore[start.x][start.y] = heuristicCostEstimate(startIdx, goal);
+    const cameFrom = genMatrix(width, height, null);
 
-  const interval = setInterval(() => {
-    if (openSet.size === 0) {
-      clearInterval(interval);
-      return;
+    return {
+        openSet, closedSet, gScore, fScore, goal, cameFrom, width, height
+    }
+};
+
+
+const aStarSolver = (solverState) => {
+    if (solverState.openSet.size === 0) {
+        return true;
     }
 
-    current = minScore(Array.from(openSet), fScore);
-    current = idxMatrix[current.x][current.y];
+    const current = minScore(Array.from(solverState.openSet), solverState.fScore);
+    const currentIdx = genIdx(current.x, current.y);
 
-    openSet.delete(current);
-    closedSet.add(current);
+    solverState.openSet.delete(currentIdx);
+    solverState.closedSet.add(currentIdx);
 
-    const addToCurrentMap = addToMap(current);
+    const addToCurrentMap = addToMap(currentIdx, solverState);
     // const checkCurrentPath = checkPath(gScore, current);
 
-    if (current.x === goal.x && current.y === goal.y) {
-      clearInterval(interval);
-      status = {
-        current,
-        gScore,
-        fScore,
-        cameFrom,
-        done: true
-      };
-      return;
+    if (current.x === solverState.goal.x && current.y === solverState.goal.y) {
+        return true;
     }
-
-    status = {
-      current,
-      gScore,
-      fScore,
-      cameFrom,
-      done: false
-    };
 
     const neighborsOffset = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
     const neighborsToCheck = neighborsOffset
-      .map(offset => [current.x + offset[0], current.y + offset[1]])
-      .filter(neighbor => neighbor[0] >= 0 && neighbor[0] < x &&
-        neighbor[1] >= 0 && neighbor[1] < y)
-      .map(neighbor => idxMatrix[neighbor[0]][neighbor[1]]);
+        .map(offset => [current.x + offset[0], current.y + offset[1]])
+        .filter(neighbor => neighbor[0] >= 0 && neighbor[0] < solverState.width && neighbor[1] >= 0 && neighbor[1] < solverState.height)
+        .map(neighbor => genIdx(neighbor[0],neighbor[1]));
 
     neighborsToCheck.forEach(addToCurrentMap);
-  }, 0.1);
+
+    return false;
 };
 
-const createProducer = (start, goal, matrix) => ({
-  start: (listener) => {
-    aStar(start, goal, matrix, listener);
-  },
-  stop: () => {
-  },
-});
+const genIdx = (() => {
+    const memo = {};
+    return (x, y) => {
+        memo[x] = memo[x] || {};
+        if (y in memo[x]) {
+            return memo[x][y]
+        }
+        memo[x][y] = {x, y};
+        return memo[x][y];
+    };
+})();
 
-const matrix = genMatrix(10, 10, 1);
 
-for(let i = 0; i < 9; i++){
-  matrix[3][i] = Infinity;
-}
+const makeMaze = (width, height, complexity=0.75, density=0.75) => {
+    const oddWidth = Math.floor(width / 2) * 2 + 1;
+    const oddHeight = Math.floor(height / 2) * 2 + 1;
+    const adjustedComplexity = Math.floor(complexity * (5 * (oddWidth + oddHeight)));
 
-xs.create(createProducer({ x: 0, y: 0 }, { x: 9, y: 0 }, matrix))
-  .addListener({
-    next: (status) => {
-      render(<Grid score={status.gScore} cameFrom={status.cameFrom}/>, document.getElementById('root'));
-    },
-    error: err => console.error(err),
-    complete: () => console.log('completed'),
-  });
+    // Adjust density depending on the maze size
+    const adjustedDensity = Math.floor(density *
+        (Math.floor(oddWidth / 2) *
+        Math.floor(oddHeight / 2)));
+
+    const matrix = genMatrix(oddWidth, oddHeight, 1);
+
+    // Fill borders
+    for(let i = 0; i < oddWidth; i++){
+        matrix[i][0] = Infinity;
+        matrix[i][oddHeight - 1] = Infinity;
+    }
+
+    for(let i = 0; i < oddWidth; i++){
+        matrix[0][i] = Infinity;
+        matrix[oddWidth - 1][i] = Infinity;
+    }
+
+    for(let i = 0; i < adjustedDensity; i++){
+        let x = Math.floor(Math.random() * Math.floor(oddWidth / 2 + 1)) * 2;
+        let y = Math.floor(Math.random() * Math.floor(oddHeight / 2 + 1)) * 2;
+
+        matrix[x][y] = Infinity;
+        for(let j = 0; j < adjustedComplexity; j++){
+            const neighbours = [];
+            if(x > 0){
+                neighbours.push([x - 2, y]);
+            }
+            if(x < oddWidth - 1){
+                neighbours.push([x + 2, y]);
+            }
+            if(y > 0){
+                neighbours.push([x, y - 2]);
+            }
+            if(y < oddHeight - 1){
+                neighbours.push([x, y + 2]);
+            }
+            if(neighbours.length){
+                const [_x, _y] = neighbours[Math.floor(Math.random() * neighbours.length)];
+                if(matrix[_x][_y] === 1){
+                    matrix[_x][_y] = Infinity;
+                    matrix[_x + Math.floor((x - _x) / 2)]
+                        [_y + Math.floor((y - _y) / 2)] = Infinity;
+                    x = _x;
+                    y = _y;
+                }
+            }
+        }
+    }
+    return matrix;
+};
+
+const matrix = makeMaze(100, 100, 1.0, 1.0);
+
+const endSubject = new Rx.Subject();
+
+const end = { x: 49, y: 49 };
+
+const solve = (cameFromMatrix, end) => {
+   const pathMatrix = genMatrix(cameFromMatrix.length, cameFromMatrix[0].length, 0);
+   let location = end;
+   while(location){
+       pathMatrix[location.x][location.y] = 1;
+       location = cameFromMatrix[location.x][location.y];
+   }
+   return pathMatrix;
+};
+
+const search = end => {
+    const mapSubject = new Rx.Subject();
+
+    if(matrix[end.x][end.y] === Infinity){
+        mapSubject.complete();
+    }
+
+    const state = aStarInitialStateFatory({ x: 1, y: 1 }, end, matrix);
+
+    const step = () => {
+        let ended;
+        for(let i=0; i < 10000; i++){
+            ended = aStarSolver(state);
+            if(ended) break;
+        }
+
+        if(ended){
+            const status = {
+                matrix,
+                gScore: state.gScore,
+                cameFrom: state.cameFrom,
+                renderMask: solve(state.cameFrom, end),
+                done: true
+            };
+            mapSubject.next(status);
+            mapSubject.complete();
+            return;
+        }else{
+            const status = {
+                matrix,
+                gScore: state.gScore,
+                cameFrom: state.cameFrom,
+                renderMask: matrix,
+                done: false
+            };
+
+            mapSubject.next(status);
+        }
+        requestAnimationFrame(step);
+    };
+
+    requestAnimationFrame(step);
+    return mapSubject;
+};
+
+
+endSubject
+    .debounce(() => Rx.Observable.timer(33))
+    .startWith(end)
+    .concatMap(search)
+    .subscribe(status =>
+        render(<Grid score={Immutable.fromJS(status.gScore)}
+                     onEnter={(e, x, y) => endSubject.next({x, y})}
+                     renderMask={Immutable.fromJS(status.renderMask)}
+                     matrix={status.matrix}
+                     cameFrom={Immutable.fromJS(status.cameFrom)}/>,
+            document.getElementById('root')));
 
