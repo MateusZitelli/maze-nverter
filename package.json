@@ -1,12 +1,7 @@
 {
-  "config": {
-    "presets": [
-      "neutrino-preset-react"
-    ]
-  },
   "scripts": {
-    "start": "neutrino start --use neutrino-preset-react",
-    "build": "neutrino build --use neutrino-preset-react"
+    "start": "neutrino start",
+    "build": "neutrino build"
   },
   "devDependencies": {
     "babel-preset-es2015": "^6.22.0",
